@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sync/atomic"
 	"time"
 )
 
@@ -53,10 +54,25 @@ func main() {
 	ports := scan.ParsePorts(*portsArg)
 	timeout := time.Duration(*timeoutMs) * time.Millisecond
 
-	// Escanear (rápido, paralelo)
-	results := scan.ScanIPs(ips, ports, timeout, *concurrency)
+	var aliveCount int64 = 0
 
-	// Output CLI
+	// Callback que se llama en cada resultado escaneado
+	onAlive := func(r models.Result) {
+		if r.Alive {
+			atomic.AddInt64(&aliveCount, 1)
+			fmt.Println("funcion del main")
+			fmt.Println("Dispositivooooooooooo vivo detectado:", scan.FormatResult(r))
+			err := backend.SendToBackend(r, time.Duration(*backendTimeoutSec)*time.Second, *backendURL)
+			if err != nil {
+				fmt.Println("Error enviando al backend:", err)
+			}
+		}
+	}
+
+	// Escaneo paralelo con callback para manejar resultados en vivo
+	results := scan.ScanIPs(ips, ports, timeout, *concurrency, onAlive)
+
+	// Output CLI completo
 	if *jsonOut {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -67,17 +83,5 @@ func main() {
 		}
 	}
 
-	// Enviar solo vivos en lote
-	var aliveResults []models.Result
-	for _, r := range results {
-		if r.Alive {
-			aliveResults = append(aliveResults, r)
-		}
-	}
-	if len(aliveResults) > 0 {
-		fmt.Printf("Enviando %d dispositivos vivos al backend...\n", len(aliveResults))
-		backend.SendToBackendBatch(aliveResults, *backendWorkers, time.Duration(*backendTimeoutSec)*time.Second, *backendURL)
-	} else {
-		fmt.Println("No hay dispositivos vivos para enviar.")
-	}
+	fmt.Printf("Escaneo completado. Dispositivos vivos enviados: %d\n", aliveCount)
 }

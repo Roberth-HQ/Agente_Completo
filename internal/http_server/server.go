@@ -12,7 +12,6 @@ import (
 	"time"
 )
 
-// runHTTPServer levanta el servidor HTTP que acepta POST /scan {"subred":"183"}
 func RunHTTPServer(
 	portsArg string,
 	timeoutMs int,
@@ -57,30 +56,36 @@ func RunHTTPServer(
 		ports := scan.ParsePorts(portsArg)
 		timeout := time.Duration(timeoutMs) * time.Millisecond
 
-		// Escanear primero
-		results := scan.ScanIPs(ips, ports, timeout, concurrency)
+		var aliveCount int64 = 0
 
-		// Imprimir resultados (rápido)
+		onAlive := func(r models.Result) {
+			fmt.Println("Dispositivo vivoooooooo detectado:", scan.FormatResult(r))
+
+			err := backend.SendToBackend(r, time.Duration(backendTimeoutSec)*time.Second, backendURL)
+			if err != nil {
+				fmt.Println("Error enviando al backenddddd:", err)
+			} else {
+				aliveCount++
+			}
+		}
+
+		results := scan.ScanIPs(ips, ports, timeout, concurrency, onAlive)
+
+		// Opcional: imprimir todos los resultados al final
 		for _, res := range results {
 			fmt.Println(scan.FormatResult(res))
 		}
 
-		// Recolectar vivos y enviarlos en lote (esperamos a que termine)
-		var aliveResults []models.Result
-		for _, r := range results {
-			if r.Alive {
-				aliveResults = append(aliveResults, r)
-			}
-		}
-		if len(aliveResults) > 0 {
-			fmt.Printf("Enviando %d dispositivos vivos al backend...\n", len(aliveResults))
-			backend.SendToBackendBatch(aliveResults, backendWorkers, time.Duration(backendTimeoutSec)*time.Second, backendURL)
-		} else {
-			fmt.Println("No hay dispositivos vivos para enviar.")
-		}
-
+		//w.WriteHeader(http.StatusOK)
+		//w.Write([]byte(fmt.Sprintf("Escaneo completado. Dispositivos vivos: %d", aliveCount)))
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(fmt.Sprintf("Escaneo completado. Dispositivos vivos: %d", len(aliveResults))))
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":  "ok",
+			"message": "Escaneo completado",
+			"alive":   aliveCount,
+		})
+
 	})
 
 	if err := http.ListenAndServe(":8081", nil); err != nil {

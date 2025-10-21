@@ -69,7 +69,13 @@ func ExpandArgToIPs(arg string) ([]string, error) {
 // ----------------------- función reutilizable de escaneo -------------------------
 
 // scanIPs realiza el escaneo paralelo de la lista de IPs usando las mismas heurísticas
-func ScanIPs(ips []string, ports []int, timeout time.Duration, concurrency int) []models.Result {
+func ScanIPs(
+	ips []string,
+	ports []int,
+	timeout time.Duration,
+	concurrency int,
+	onAlive func(models.Result), // nuevo parámetro
+) []models.Result {
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, concurrency)
 	resultsCh := make(chan models.Result, len(ips))
@@ -82,12 +88,10 @@ func ScanIPs(ips []string, ports []int, timeout time.Duration, concurrency int) 
 			defer func() { <-sem }()
 
 			res := models.Result{IP: ip}
-			// ICMP
 			if tryPing(ip, timeout) {
 				res.Alive = true
 				res.Method = "icmp"
 			} else {
-				// TCP fallback
 				for _, p := range ports {
 					if tryTCP(ip, p, timeout) {
 						res.Alive = true
@@ -98,17 +102,19 @@ func ScanIPs(ips []string, ports []int, timeout time.Duration, concurrency int) 
 				}
 			}
 
-			// MAC: forzamos una acción que rellene la caché ARP y luego leemos ARP
 			mac, _ := getMAC(ip, timeout)
 			res.MAC = mac
 
-			// Reverse DNS
 			if names, err := net.LookupAddr(ip); err == nil && len(names) > 0 {
 				res.ReverseDNS = strings.TrimSuffix(names[0], ".")
 			}
 
-			// Device detection
 			res.DeviceType = detectDeviceType(ip, ports, timeout, res.MAC, res.ReverseDNS)
+
+			// Llamamos al callback si está vivo
+			if res.Alive && onAlive != nil {
+				onAlive(res)
+			}
 
 			resultsCh <- res
 		}(ip)
