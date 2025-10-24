@@ -21,7 +21,7 @@ var (
 	jsonOut     = flag.Bool("json", false, "Salida JSON en vez de texto")
 
 	// Config backend
-	backendURL        = flag.String("backend", "http://192.168.182.136:3000/dispositivos", "URL del backend para enviar dispositivos")
+	backendURL        = flag.String("backend", "http://192.168.182.136:3000/dispositivos/found", "URL del backend para enviar dispositivos")
 	backendTimeoutSec = flag.Int("backend-timeout", 3, "Timeout en segundos para cada POST al backend")
 	backendWorkers    = flag.Int("backend-workers", 20, "Concurrencia para envíos al backend")
 )
@@ -73,6 +73,7 @@ func main() {
 	results := scan.ScanIPs(ips, ports, timeout, *concurrency, onAlive)
 
 	// Output CLI completo
+
 	if *jsonOut {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
