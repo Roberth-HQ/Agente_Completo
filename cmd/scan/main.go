@@ -7,6 +7,7 @@ import (
 	httpserver "escaner/internal/http_server"
 	"escaner/internal/models"
 	scan "escaner/internal/utils"
+	"escaner/internal/wsclient"
 	"flag"
 	"fmt"
 	"os"
@@ -21,7 +22,8 @@ var (
 	jsonOut     = flag.Bool("json", false, "Salida JSON en vez de texto")
 
 	// Config backend
-	backendURL        = flag.String("backend", "http://192.168.182.136:3000/dispositivos/found", "URL del backend para enviar dispositivos")
+	//backendURL        = flag.String("backend", "http://192.168.182.136:3000/dispositivos/found", "URL del backend para enviar dispositivos")
+	backendURL        = flag.String("backend", "http://192.168.0.24:3000/dispositivos/found", "URL del backend para enviar dispositivos")
 	backendTimeoutSec = flag.Int("backend-timeout", 3, "Timeout en segundos para cada POST al backend")
 	backendWorkers    = flag.Int("backend-workers", 20, "Concurrencia para envíos al backend")
 )
@@ -39,8 +41,11 @@ func main() {
 			*backendTimeoutSec,
 			*backendURL,
 		)
-		fmt.Println("Servidor del agente escuchando en :8081 (modo solo servidor).")
-		// Mantener proceso vivo
+
+		// 🚀 Iniciar conexión WebSocket
+		go wsclient.ConnectWebSocket("192.168.0.24:8082") // o la IP donde corre tu backend
+
+		fmt.Println("Servidor del agente escuchando en :8081 (modo servidor + WS).")
 		select {}
 	}
 
