@@ -4,13 +4,13 @@ package main
 import (
 	"encoding/json"
 	"escaner/internal/backend"
-	httpserver "escaner/internal/http_server"
 	"escaner/internal/models"
 	scan "escaner/internal/utils"
 	"escaner/internal/wsclient"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"sync/atomic"
 	"time"
 )
@@ -22,31 +22,47 @@ var (
 	jsonOut     = flag.Bool("json", false, "Salida JSON en vez de texto")
 
 	// Config backend
-	//backendURL        = flag.String("backend", "http://192.168.182.136:3000/dispositivos/found", "URL del backend para enviar dispositivos")
-	backendURL        = flag.String("backend", "http://192.168.0.24:3000/dispositivos/found", "URL del backend para enviar dispositivos")
+	//ipServer = flag.String("ipserver", "192.168.0.24", "direcion del servidor del backend")
+	ipServer = flag.String("ipserver", "192.168.182.136", "direcion del servidor del backend")
+
+	//backendURL = flag.String("backend", "http://192.168.182.136:3000/dispositivos/found", "URL del backend para enviar dispositivos")
+	//backendURL        = flag.String("backend", "http://192.168.0.24:3000/dispositivos/found", "URL del backend para enviar dispositivos")
 	backendTimeoutSec = flag.Int("backend-timeout", 3, "Timeout en segundos para cada POST al backend")
 	backendWorkers    = flag.Int("backend-workers", 20, "Concurrencia para envíos al backend")
 )
 
 func main() {
+
 	flag.Parse()
+	backendURL := fmt.Sprintf("http://%s:3000/dispositivos/found", *ipServer)
+	wsURL := fmt.Sprintf("%s:8082", *ipServer)
+	ip := fmt.Sprint("", *ipServer)
 
 	// Si no hay argumento, arrancamos solo el servidor HTTP (modo agente)
 	if flag.NArg() < 1 {
-		go httpserver.RunHTTPServer(
-			*portsArg,
-			*timeoutMs,
-			*concurrency,
-			*backendWorkers,
-			*backendTimeoutSec,
-			*backendURL,
-		)
+		// go httpserver.RunHTTPServer(
+		// 	*portsArg,
+		// 	*timeoutMs,
+		// 	*concurrency,
+		// 	*backendWorkers,
+		// 	*backendTimeoutSec,
+		// 	backendURL,
+		// )
 
 		// 🚀 Iniciar conexión WebSocket
-		go wsclient.ConnectWebSocket("192.168.0.24:8082") // o la IP donde corre tu backend
+		//go wsclient.ConnectWebSocket("192.168.0.24:8082") // o la IP donde corre tu backend
+		//go wsclient.ConnectWebSocket("192.168.182.136:8082") // o la IP donde corre tu backend
+		go wsclient.ConnectWebSocket(wsURL, ip)
 
 		fmt.Println("Servidor del agente escuchando en :8081 (modo servidor + WS).")
-		select {}
+		//select {}
+		// Esperar Ctrl+C
+		interrupt := make(chan os.Signal, 1)
+		signal.Notify(interrupt, os.Interrupt)
+		<-interrupt
+
+		fmt.Println("🔌 Señal recibida, cerrando proceso...")
+
 	}
 
 	// Si sí hay argumento, ejecutamos flujo CLI: escanear -> imprimir -> enviar
@@ -67,7 +83,7 @@ func main() {
 			atomic.AddInt64(&aliveCount, 1)
 			fmt.Println("funcion del main")
 			fmt.Println("Dispositivooooooooooo vivo detectado:", scan.FormatResult(r))
-			err := backend.SendToBackend(r, time.Duration(*backendTimeoutSec)*time.Second, *backendURL)
+			err := backend.SendToBackend(r, time.Duration(*backendTimeoutSec)*time.Second, backendURL)
 			if err != nil {
 				fmt.Println("Error enviando al backend:", err)
 			}

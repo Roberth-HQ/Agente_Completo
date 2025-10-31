@@ -19,7 +19,7 @@ type WSMessage struct {
 }
 
 // Función para iniciar la conexión con el servidor WebSocket
-func ConnectWebSocket(serverAddr string) {
+func ConnectWebSocket(serverAddr string, ip string) {
 	u := url.URL{Scheme: "ws", Host: serverAddr, Path: "/agents"}
 	log.Printf("Conectando al servidor WebSocket: %s", u.String())
 
@@ -30,10 +30,12 @@ func ConnectWebSocket(serverAddr string) {
 	defer c.Close()
 
 	done := make(chan struct{})
+	endpoint := fmt.Sprintf("http://%s:3000/dispositivos/found", ip)
 
 	// Manejar mensajes entrantes del servidor
 	go func() {
 		defer close(done)
+
 		for {
 			_, message, err := c.ReadMessage()
 			if err != nil {
@@ -48,7 +50,9 @@ func ConnectWebSocket(serverAddr string) {
 			if err := json.Unmarshal(message, &msg); err == nil {
 				if msg.Type == "scan_request" {
 					fmt.Println("🚀 Iniciando escaneo solicitado por WS con data:", msg.Data)
-					RunScanFromWS(msg.Data, "http://192.168.0.24:3000/dispositivos/found", 3)
+					RunScanFromWS(msg.Data, endpoint, 3)
+					//RunScanFromWS(msg.Data, "http://ip:3000/dispositivos/found", 3)
+					//RunScanFromWS(msg.Data, "http://192.168.0.24:3000/dispositivos/found", 3)
 				}
 
 			}
@@ -72,8 +76,19 @@ func ConnectWebSocket(serverAddr string) {
 			return
 		case <-interrupt:
 			log.Println("🔌 Cierre solicitado, desconectando WS...")
-			c.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-			time.Sleep(time.Second)
+
+			// 🔒 Envía el mensaje de cierre al servidor
+			err := c.WriteMessage(websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+			if err != nil {
+				log.Println("⚠️ Error enviando mensaje de cierre:", err)
+			}
+
+			// 🧹 Espera un momento para permitir que el cierre llegue correctamente
+			time.Sleep(500 * time.Millisecond)
+
+			// 🔚 Cierra la conexión
+			c.Close()
 			return
 		}
 	}
