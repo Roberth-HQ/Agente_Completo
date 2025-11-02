@@ -22,8 +22,8 @@ var (
 	jsonOut     = flag.Bool("json", false, "Salida JSON en vez de texto")
 
 	// Config backend
-	//ipServer = flag.String("ipserver", "192.168.0.24", "direcion del servidor del backend")
-	ipServer = flag.String("ipserver", "192.168.182.136", "direcion del servidor del backend")
+	ipServer = flag.String("ipserver", "192.168.0.24", "direcion del servidor del backend")
+	//ipServer = flag.String("ipserver", "192.168.182.136", "direcion del servidor del backend")
 
 	//backendURL = flag.String("backend", "http://192.168.182.136:3000/dispositivos/found", "URL del backend para enviar dispositivos")
 	//backendURL        = flag.String("backend", "http://192.168.0.24:3000/dispositivos/found", "URL del backend para enviar dispositivos")

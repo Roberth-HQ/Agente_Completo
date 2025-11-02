@@ -32,6 +32,21 @@ func ConnectWebSocket(serverAddr string, ip string) {
 	done := make(chan struct{})
 	endpoint := fmt.Sprintf("http://%s:3000/dispositivos/found", ip)
 
+	// 🧠 Construir el mensaje inicial con datos del sistema
+	registerMsg := WSMessage{
+		Type: "register",
+		Data: map[string]interface{}{
+			"agentId":    GetMacAddress(),
+			"subnet":     GetLocalSubnet(),
+			"cpuCores":   GetCPUCores(),
+			"ramMb":      GetRAM(),
+			"isFallback": false,
+		},
+	}
+	// 📨 Enviar datos al backend
+	c.WriteJSON(registerMsg)
+	log.Printf("📤 Agente registrado: %+v\n", registerMsg.Data)
+
 	// Manejar mensajes entrantes del servidor
 	go func() {
 		defer close(done)
@@ -64,11 +79,11 @@ func ConnectWebSocket(serverAddr string, ip string) {
 	signal.Notify(interrupt, os.Interrupt)
 
 	// Enviar un mensaje inicial
-	msg := WSMessage{
-		Type: "register",
-		Data: map[string]string{"agent_id": "agente-001"},
-	}
-	c.WriteJSON(msg)
+	// msg := WSMessage{
+	// 	Type: "register",
+	// 	Data: map[string]string{"agent_id": "agente-001"},
+	// }
+	// c.WriteJSON(msg)
 
 	for {
 		select {
