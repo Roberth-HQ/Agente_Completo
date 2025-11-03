@@ -237,8 +237,13 @@ func simpleOUIVendor(mac string) string {
 		return "Samsung"
 	case "3c5a37", "3c5a47":
 		return "Dahua/CameraVendor" // ejemplo
-	case "a0b1c2": // placeholder
+	case "001d1a", "001ec0":
+		return "Hikvision/Camera"
+	case "a0b1c2":
 		return "Yealink/VoIP"
+	case "000b82":
+		return "Grandstream/VoIP"
+
 	}
 	return ""
 }
