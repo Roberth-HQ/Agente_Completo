@@ -11,48 +11,150 @@ import (
 	"time"
 )
 
-// ----------------------- MAC retrieval (heurístico) -------------------------
-
-// getMAC intenta obtener la MAC para una IP. Primero fuerza una acción para rellenar la caché ARP,
-// luego lee /proc/net/arp (Linux) o ejecuta `arp` y parsea la salida.
+// getMACSimple intenta obtener la MAC para una IP usando:
+// 1) ip neigh show <ip> (Linux) -> busca "lladdr"
+// 2) /proc/net/arp (Linux)
+// 3) arp -n <ip> o arp -a (fallback)
+// Devuelve la MAC en minúsculas con ":" o error.
 func getMAC(ip string, timeout time.Duration) (string, error) {
-	// Intentar forzar entrada ARP (ping o TCP) para que la tabla ARP tenga algo
-	ensureARPEntry(ip, timeout)
+	// Forzar creación de entrada ARP (ping / arping)
+	ensureARPEntrySimple(ip, timeout)
 
-	// Preferir lectura nativa en Linux (/proc/net/arp)
+	// 1) ip neigh (Linux) — muy recomendable
 	if runtime.GOOS == "linux" {
-		if m := readMACFromProcNetARP(ip); m != "" {
-			return m, nil
+		if mac := macFromIPNeigh(ip); mac != "" {
+			return mac, nil
+		}
+		// 2) /proc/net/arp
+		if mac := readMACFromProcNetARP(ip); mac != "" {
+			return mac, nil
 		}
 	}
-	// Fallback a comando arp
-	if m := macFromARPCommand(ip); m != "" {
-		return strings.ToLower(m), nil
+
+	// 3) Fallback: comando arp (Windows / *nix)
+	if mac := macFromARPCommandSimple(ip); mac != "" {
+		return mac, nil
 	}
+
 	return "", errors.New("MAC no encontrada")
 }
 
-// ensureARPEntry intenta provocar que el sistema cree/actualice la entrada ARP de la IP.
-// Se usa un ping y/o un intento TCP breve.
-func ensureARPEntry(ip string, timeout time.Duration) {
-	// Intentamos ICMP primero (rápido)
-	if tryPing(ip, timeout) {
-		return
+// ensureARPEntrySimple hace ping y, si está instalado, arping para poblar ARP.
+func ensureARPEntrySimple(ip string, timeout time.Duration) {
+	// Ping (cross-platform)
+	pingTimeout := int(timeout.Seconds())
+	if pingTimeout < 1 {
+		pingTimeout = 1
 	}
-	// Intentamos varios puertos TCP comunes para provocar ARP
-	common := []int{80, 22, 443}
-	for _, p := range common {
-		if tryTCP(ip, p, timeout/2) {
-			return
-		}
+
+	if runtime.GOOS == "windows" {
+		// Windows: ping -n 1 -w <ms>
+		_ = exec.Command("ping", "-n", "1", "-w", fmt.Sprintf("%d", pingTimeout*1000), ip).Run()
+	} else {
+		// Unix: ping -c 1 -W <sec>
+		_ = exec.Command("ping", "-c", "1", "-W", fmt.Sprintf("%d", pingTimeout), ip).Run()
 	}
-	// En Linux, también podemos intentar `arping` si está instalado (no obligatorio)
+
+	// intentar arping si existe (solo Linux normalmente)
 	if runtime.GOOS == "linux" {
-		_ = exec.Command("arping", "-c", "1", "-w", fmt.Sprintf("%d", timeout.Milliseconds()/1000), ip).Run()
+		if _, err := exec.LookPath("arping"); err == nil {
+			// arping -c 1 -w <seg>
+			_ = exec.Command("arping", "-c", "1", "-w", fmt.Sprintf("%d", pingTimeout), ip).Run()
+		}
 	}
 }
 
-// readMACFromProcNetARP lee /proc/net/arp en Linux y extrae la MAC si existe
+// macFromIPNeigh usa `ip neigh show <ip>` y busca "lladdr <mac>"
+func macFromIPNeigh(ip string) string {
+	out, err := exec.Command("ip", "neigh", "show", ip).Output()
+	if err != nil || len(out) == 0 {
+		return ""
+	}
+	s := string(out)
+	// Ejemplo: "192.168.0.24 dev eth0 lladdr f8:63:d9:9b:93:a3 REACHABLE"
+	if idx := strings.Index(s, "lladdr "); idx != -1 {
+		rest := s[idx+7:]
+		fields := strings.Fields(rest)
+		if len(fields) > 0 && looksLikeMAC(fields[0]) {
+			return strings.ToLower(normalizeMAC(fields[0]))
+		}
+	}
+	// También puede venir sin 'lladdr' pero con 'REACHABLE' - buscamos token MAC
+	for _, token := range strings.Fields(s) {
+		if looksLikeMAC(token) {
+			return strings.ToLower(normalizeMAC(token))
+		}
+	}
+	return ""
+}
+
+// macFromARPCommandSimple intenta `arp -n <ip>` o `arp -a` y parsea salida minimal
+func macFromARPCommandSimple(ip string) string {
+	var out []byte
+	var err error
+
+	if runtime.GOOS == "windows" {
+		out, err = exec.Command("arp", "-a", ip).CombinedOutput()
+	} else {
+		// en linux/mac intentamos `arp -n <ip>` o `arp -n`
+		out, err = exec.Command("arp", "-n", ip).CombinedOutput()
+		if err != nil || len(out) == 0 {
+			out, _ = exec.Command("arp", "-n").CombinedOutput()
+		}
+	}
+	if err != nil && len(out) == 0 {
+		return ""
+	}
+	text := string(out)
+
+	// Buscar token que parezca MAC en la línea que contenga la IP
+	lines := strings.Split(text, "\n")
+	for _, line := range lines {
+		if strings.Contains(line, ip) {
+			for _, tok := range strings.Fields(line) {
+				c := strings.Trim(tok, "[],()")
+				if looksLikeMAC(c) {
+					return strings.ToLower(normalizeMAC(c))
+				}
+			}
+		}
+	}
+
+	// Si no hay línea con la IP, buscar cualquier MAC en salida (fallback)
+	for _, tok := range strings.Fields(text) {
+		c := strings.Trim(tok, "[],()")
+		if looksLikeMAC(c) {
+			return strings.ToLower(normalizeMAC(c))
+		}
+	}
+	return ""
+}
+
+// normalizeMAC convierte formatos con "-" a ":" y limpia
+func normalizeMAC(s string) string {
+	return strings.ReplaceAll(strings.ToLower(s), "-", ":")
+}
+
+// looksLikeMAC revisa patrón xx:xx:xx:xx:xx:xx (hex)
+func looksLikeMAC(s string) bool {
+	s = strings.TrimSpace(s)
+	s = strings.ReplaceAll(s, "-", ":")
+	parts := strings.Split(s, ":")
+	if len(parts) != 6 {
+		return false
+	}
+	for _, p := range parts {
+		if len(p) != 2 {
+			return false
+		}
+		for _, ch := range p {
+			if !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')) {
+				return false
+			}
+		}
+	}
+	return true
+}
 func readMACFromProcNetARP(ip string) string {
 	f, err := os.Open("/proc/net/arp")
 	if err != nil {
@@ -76,107 +178,4 @@ func readMACFromProcNetARP(ip string) string {
 		}
 	}
 	return ""
-}
-
-func macFromARPCommand(ip string) string {
-	var out []byte
-	var err error
-	if runtime.GOOS == "windows" {
-		out, err = exec.Command("arp", "-a").CombinedOutput()
-	} else {
-		// en *nix intentamos `arp -n <ip>` que a veces da menos líneas
-		out, err = exec.Command("arp", "-n", ip).CombinedOutput()
-		if err != nil || len(out) == 0 {
-			// fallback a `arp -n`
-			out, err = exec.Command("arp", "-n").CombinedOutput()
-		}
-	}
-	if err != nil {
-		return ""
-	}
-	text := string(out)
-
-	// Primero intentamos parsear líneas que contengan la IP
-	if mac, err := parseArpOutput(text, ip); err == nil {
-		return mac
-	}
-
-	// Si no, intentamos buscar cualquier token que parezca MAC en toda la salida
-	fields := strings.Fields(text)
-	for i, f := range fields {
-		clean := strings.Trim(f, "[],()")
-		if looksLikeMAC(clean) {
-			return strings.ToLower(strings.ReplaceAll(clean, "-", ":"))
-		}
-		// si encontramos el ip token, miramos el siguiente
-		if strings.Contains(clean, ip) && i+1 < len(fields) {
-			cand := strings.Trim(fields[i+1], "[],()")
-			if looksLikeMAC(cand) {
-				return strings.ToLower(strings.ReplaceAll(cand, "-", ":"))
-			}
-		}
-	}
-	return ""
-}
-func looksLikeMAC(s string) bool {
-	parts := strings.FieldsFunc(s, func(r rune) bool {
-		return r == ':' || r == '-'
-	})
-	if len(parts) != 6 {
-		return false
-	}
-	for _, p := range parts {
-		if len(p) != 2 {
-			return false
-		}
-		for _, ch := range p {
-			if !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')) {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-// parseArpOutput intenta extraer MAC de la salida de `arp` de distintos sistemas
-func parseArpOutput(output string, ip string) (string, error) {
-	lines := strings.Split(output, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if !strings.Contains(line, ip) {
-			// en algunos sistemas la salida no contiene la IP en la línea con la MAC,
-			// así que intentamos detectar tokens parecidos a MAC en cualquier línea.
-			toks := strings.Fields(line)
-			for _, t := range toks {
-				clean := strings.Trim(t, "[],()")
-				if looksLikeMAC(clean) {
-					return strings.ToLower(strings.ReplaceAll(clean, "-", ":")), nil
-				}
-			}
-			continue
-		}
-		// Si la línea contiene la IP, buscamos token mac en los tokens
-		toks := strings.Fields(line)
-		for _, t := range toks {
-			clean := strings.Trim(t, "[],()")
-			if looksLikeMAC(clean) {
-				return strings.ToLower(strings.ReplaceAll(clean, "-", ":")), nil
-			}
-		}
-		// caso macOS: "? (192.168.1.10) at aa:bb:cc:dd:ee:ff on en0 ifscope [ethernet]"
-		if idx := strings.Index(line, " at "); idx != -1 {
-			rest := line[idx+4:]
-			parts := strings.Fields(rest)
-			if len(parts) > 0 {
-				clean := strings.Trim(parts[0], ",")
-				if looksLikeMAC(clean) {
-					return strings.ToLower(strings.ReplaceAll(clean, "-", ":")), nil
-				}
-			}
-		}
-	}
-	return "", errors.New("MAC no encontrada en salida ARP")
 }

@@ -3,6 +3,7 @@ package wsclient
 import (
 	"net"
 	"runtime"
+	"strings"
 
 	"github.com/shirou/gopsutil/mem"
 )
@@ -27,10 +28,15 @@ func GetLocalSubnet() string {
 	if err != nil {
 		return "unknown"
 	}
+
 	for _, addr := range addrs {
 		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-			if ipnet.IP.To4() != nil {
-				return ipnet.IP.String() + "/24"
+			ip := ipnet.IP.To4()
+			if ip != nil && !ip.IsLinkLocalUnicast() {
+				parts := strings.Split(ip.String(), ".")
+				if len(parts) == 4 {
+					return parts[2] // penúltimo octeto
+				}
 			}
 		}
 	}

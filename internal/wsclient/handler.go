@@ -12,7 +12,7 @@ import (
 
 // Estructura del mensaje WS esperado
 type ScanRequest struct {
-	Subred string `json:"subred"`
+	Subred string `json:"subnet"`
 }
 
 // Función que ejecuta el escaneo cuando llega por WS

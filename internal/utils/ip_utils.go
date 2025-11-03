@@ -91,81 +91,156 @@ func tryTCP(ip string, port int, timeout time.Duration) bool {
 
 // ----------------------- Device fingerprint heuristics -------------------------
 
-func detectDeviceType(ip string, ports []int, timeout time.Duration, mac, ptr string) string {
-	has := func(p int) bool { return tryTCP(ip, p, timeout) }
+// func detectDeviceType(ip string, ports []int, timeout time.Duration, mac, ptr string) string {
+// 	has := func(p int) bool { return tryTCP(ip, p, timeout) }
 
-	// Printer ports
-	if has(9100) || has(631) || has(515) {
-		h := probeHTTPForHints(ip, timeout)
-		if h != "" {
-			return "Printer (" + h + ")"
-		}
-		if looksLikePrinterName(ptr) {
-			return "Printer (ptr)"
-		}
+// 	// Printer ports
+// 	if has(9100) || has(631) || has(515) {
+// 		h := probeHTTPForHints(ip, timeout)
+// 		if h != "" {
+// 			return "Printer (" + h + ")"
+// 		}
+// 		if looksLikePrinterName(ptr) {
+// 			return "Printer (ptr)"
+// 		}
+// 		return "Printer"
+// 	}
+
+// 	// SMB/NAS
+// 	if has(445) || has(139) {
+// 		if strings.Contains(strings.ToLower(ptr), "nas") {
+// 			return "NAS/SMB"
+// 		}
+// 		return "NAS/Windows SMB"
+// 	}
+
+// 	// RDP
+// 	if has(3389) {
+// 		return "Windows (RDP)"
+// 	}
+
+// 	// SSH
+// 	if has(22) {
+// 		if strings.Contains(strings.ToLower(ptr), "raspberry") || strings.Contains(strings.ToLower(ptr), "raspi") {
+// 			return "Raspberry Pi (Linux/SSH)"
+// 		}
+// 		return "Linux/Unix (SSH)"
+// 	}
+
+// 	// Web-ish
+// 	if has(80) || has(443) || has(8080) {
+// 		h := probeHTTPForHints(ip, timeout)
+// 		if h != "" {
+// 			if looksLikePrinterHint(h) || looksLikePrinterName(ptr) {
+// 				return "Printer (" + h + ")"
+// 			}
+// 			return "Web server (" + h + ")"
+// 		}
+// 		return "Web server"
+// 	}
+
+// 	// DB/IoT heuristics
+// 	if has(3306) || has(5432) {
+// 		return "DB server / Backend"
+// 	}
+
+// 	// fallback: use PTR content
+// 	lptr := strings.ToLower(ptr)
+// 	if lptr != "" {
+// 		if looksLikePrinterName(ptr) {
+// 			return "Printer (ptr)"
+// 		}
+// 		if strings.Contains(lptr, "router") || strings.Contains(lptr, "gateway") {
+// 			return "Router/Gateway"
+// 		}
+// 		if strings.Contains(lptr, "camera") || strings.Contains(lptr, "ipcam") {
+// 			return "IP Camera"
+// 		}
+// 	}
+
+// 	// MAC vendor heuristics (muy limitado)
+// 	if mac != "" {
+// 		macLow := strings.ToLower(mac)
+// 		if strings.HasPrefix(macLow, "00:1a:") || strings.HasPrefix(macLow, "00:1b:") {
+// 			return "Device (MAC vendor hint)"
+// 		}
+// 	}
+
+//		return "Unknown"
+//	}
+func detectDeviceType(ip string, ports []int, timeout time.Duration, mac string, reverseDNS string) string {
+	// 1) si ya es impresora mantenlo (si tienes lógica de impresora en otro lado)
+	// ejemplo simple: si puerto 9100 o 631 detecta impresora rápidamente
+	if tryTCP(ip, 9100, timeout/2) || tryTCP(ip, 631, timeout/2) || tryTCP(ip, 515, timeout/2) {
 		return "Printer"
 	}
 
-	// SMB/NAS
-	if has(445) || has(139) {
-		if strings.Contains(strings.ToLower(ptr), "nas") {
-			return "NAS/SMB"
+	// 2) OUI heurística
+	vendor := simpleOUIVendor(mac)
+	if strings.Contains(strings.ToLower(vendor), "camera") || strings.Contains(strings.ToLower(vendor), "dahua") {
+		return "Camera"
+	}
+	if strings.Contains(strings.ToLower(vendor), "yealink") || strings.Contains(strings.ToLower(vendor), "polycom") {
+		return "VoIP phone"
+	}
+	if strings.ToLower(vendor) == "apple" {
+		// puede ser iPhone / Mac / iPad -> dejamos Unknown y lo intentamos con mDNS/http
+	}
+
+	// 3) quick port probes + banner heuristics
+	// RTSP -> camera
+	if tryTCP(ip, 554, timeout/2) {
+		// intentar banner o DESCRIBE simple via TCP read
+		ban := bannerProbe(ip, 554, timeout/2)
+		if strings.Contains(strings.ToLower(ban), "rtsp") || strings.Contains(strings.ToLower(ban), "camera") {
+			return "Camera"
 		}
-		return "NAS/Windows SMB"
+		return "Camera"
 	}
 
-	// RDP
-	if has(3389) {
-		return "Windows (RDP)"
+	// SIP/VoIP -> telefono IP
+	if tryTCP(ip, 5060, timeout/2) || tryTCP(ip, 5061, timeout/2) {
+		return "VoIP phone"
 	}
 
-	// SSH
-	if has(22) {
-		if strings.Contains(strings.ToLower(ptr), "raspberry") || strings.Contains(strings.ToLower(ptr), "raspi") {
-			return "Raspberry Pi (Linux/SSH)"
+	// SMB/Netbios/RDP/SSH -> probablemente PC/Server
+	if tryTCP(ip, 445, timeout/2) || tryTCP(ip, 139, timeout/2) || tryTCP(ip, 3389, timeout/2) || tryTCP(ip, 22, timeout/2) {
+		return "PC"
+	}
+
+	// HTTP: chequear título / server para hints (cámaras y algunos móviles exponen admin pages)
+	if tryTCP(ip, 80, timeout/2) || tryTCP(ip, 8080, timeout/2) || tryTCP(ip, 8000, timeout/2) {
+		server, title := httpProbeTitle(ip, 80, timeout/2)
+		lower := strings.ToLower(server + " " + title)
+		if strings.Contains(lower, "hikvision") || strings.Contains(lower, "dahua") || strings.Contains(lower, "axis") {
+			return "Camera"
 		}
-		return "Linux/Unix (SSH)"
+		if strings.Contains(lower, "android") || strings.Contains(lower, "iphone") || strings.Contains(lower, "apple") {
+			return "Mobile"
+		}
+		if strings.Contains(lower, "phone") || strings.Contains(lower, "sip") || strings.Contains(lower, "asterisk") {
+			return "VoIP phone"
+		}
+		// si no encontramos pistas, pero hay HTTP, puede ser PC/IoT -> marcar unknown para no false-positive
 	}
 
-	// Web-ish
-	if has(80) || has(443) || has(8080) {
-		h := probeHTTPForHints(ip, timeout)
-		if h != "" {
-			if looksLikePrinterHint(h) || looksLikePrinterName(ptr) {
-				return "Printer (" + h + ")"
+	// 4) heurística por MAC -> mobiles / hubs
+	if vendor == "Apple" {
+		// si tiene HTTP y nombre via reverseDNS probablemente es "Mobile" o "PC"
+		if reverseDNS != "" {
+			if strings.Contains(strings.ToLower(reverseDNS), "iphone") || strings.Contains(strings.ToLower(reverseDNS), "ipad") {
+				return "Mobile"
 			}
-			return "Web server (" + h + ")"
+			// macbook suele tener 'macbook' o 'mac' en reverse dns
+			if strings.Contains(strings.ToLower(reverseDNS), "mac") {
+				return "PC"
+			}
 		}
-		return "Web server"
+		// si nada, devolver Mobile como hipótesis baja
+		return "Mobile"
 	}
 
-	// DB/IoT heuristics
-	if has(3306) || has(5432) {
-		return "DB server / Backend"
-	}
-
-	// fallback: use PTR content
-	lptr := strings.ToLower(ptr)
-	if lptr != "" {
-		if looksLikePrinterName(ptr) {
-			return "Printer (ptr)"
-		}
-		if strings.Contains(lptr, "router") || strings.Contains(lptr, "gateway") {
-			return "Router/Gateway"
-		}
-		if strings.Contains(lptr, "camera") || strings.Contains(lptr, "ipcam") {
-			return "IP Camera"
-		}
-	}
-
-	// MAC vendor heuristics (muy limitado)
-	if mac != "" {
-		macLow := strings.ToLower(mac)
-		if strings.HasPrefix(macLow, "00:1a:") || strings.HasPrefix(macLow, "00:1b:") {
-			return "Device (MAC vendor hint)"
-		}
-	}
-
+	// fallback
 	return "Unknown"
 }
 
