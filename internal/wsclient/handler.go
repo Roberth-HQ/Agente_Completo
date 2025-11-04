@@ -52,4 +52,10 @@ func RunScanFromWS(data interface{}, backendURL string, backendTimeoutSec int) {
 
 	scan.ScanIPs(ips, ports, timeout, 200, onAlive)
 	fmt.Println("✅ Escaneo WS completado.")
+
+	// 🚀 Enviar mensaje final al backend
+	err = backend.SendFinalMessage(time.Duration(backendTimeoutSec)*time.Second, backendURL, req.Subred)
+	if err != nil {
+		fmt.Println("❌ Error enviando mensaje final:", err)
+	}
 }
