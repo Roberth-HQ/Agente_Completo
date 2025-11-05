@@ -22,8 +22,8 @@ var (
 	jsonOut     = flag.Bool("json", false, "Salida JSON en vez de texto")
 
 	// Config backend
-	ipServer = flag.String("ipserver", "192.168.0.24", "direcion del servidor del backend")
-	//ipServer = flag.String("ipserver", "192.168.182.136", "direcion del servidor del backend")
+	//ipServer = flag.String("ipserver", "192.168.0.24", "direcion del servidor del backend")
+	ipServer = flag.String("ipserver", "192.168.182.136", "direcion del servidor del backend")
 
 	//backendURL = flag.String("backend", "http://192.168.182.136:3000/dispositivos/found", "URL del backend para enviar dispositivos")
 	//backendURL        = flag.String("backend", "http://192.168.0.24:3000/dispositivos/found", "URL del backend para enviar dispositivos")
@@ -37,6 +37,22 @@ func main() {
 	backendURL := fmt.Sprintf("http://%s:3000/dispositivos/found", *ipServer)
 	wsURL := fmt.Sprintf("%s:8082", *ipServer)
 	ip := fmt.Sprint("", *ipServer)
+	//NUEVA FUNCIONALIDAD------------------------------
+	backendURLEquipos := fmt.Sprintf("http://%s:3000/equipos", *ipServer)
+	equipo := scan.ObtenerInfoEquipo(*ipServer, os.Getenv("USERNAME"))
+	go func() {
+		for {
+			err := backend.EnviarEquipo(equipo, backendURLEquipos, time.Duration(*backendTimeoutSec)*time.Second)
+			if err != nil {
+				fmt.Println("Error enviando equipo:", err)
+			} else {
+				fmt.Println("✅ Datos del equipo enviados correctamente al backend")
+			}
+			time.Sleep(24 * time.Hour) // o cada cierto tiempo que definas
+		}
+	}()
+
+	//----------------------------
 
 	// Si no hay argumento, arrancamos solo el servidor HTTP (modo agente)
 	if flag.NArg() < 1 {

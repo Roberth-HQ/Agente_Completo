@@ -40,7 +40,7 @@ func ConnectWebSocket(serverAddr string, ip string) {
 			"subnet":     GetLocalSubnet(),
 			"cpuCores":   GetCPUCores(),
 			"ramMb":      GetRAM(),
-			"isFallback": false,
+			"isFallback": true,
 		},
 	}
 	// 📨 Enviar datos al backend
