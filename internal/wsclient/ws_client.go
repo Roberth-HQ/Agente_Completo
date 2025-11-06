@@ -19,7 +19,7 @@ type WSMessage struct {
 }
 
 // Función para iniciar la conexión con el servidor WebSocket
-func ConnectWebSocket(serverAddr string, ip string) {
+func ConnectWebSocket(serverAddr string, ip string, isFallback bool) {
 	u := url.URL{Scheme: "ws", Host: serverAddr, Path: "/agents"}
 	log.Printf("Conectando al servidor WebSocket: %s", u.String())
 
@@ -40,7 +40,7 @@ func ConnectWebSocket(serverAddr string, ip string) {
 			"subnet":     GetLocalSubnet(),
 			"cpuCores":   GetCPUCores(),
 			"ramMb":      GetRAM(),
-			"isFallback": true,
+			"isFallback": isFallback,
 		},
 	}
 	// 📨 Enviar datos al backend

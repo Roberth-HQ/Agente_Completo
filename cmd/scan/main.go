@@ -37,6 +37,7 @@ func main() {
 	backendURL := fmt.Sprintf("http://%s:3000/dispositivos/found", *ipServer)
 	wsURL := fmt.Sprintf("%s:8082", *ipServer)
 	ip := fmt.Sprint("", *ipServer)
+	isFallback := true
 	//NUEVA FUNCIONALIDAD------------------------------
 	backendURLEquipos := fmt.Sprintf("http://%s:3000/equipos", *ipServer)
 	equipo := scan.ObtenerInfoEquipo(*ipServer, os.Getenv("USERNAME"))
@@ -68,7 +69,7 @@ func main() {
 		// 🚀 Iniciar conexión WebSocket
 		//go wsclient.ConnectWebSocket("192.168.0.24:8082") // o la IP donde corre tu backend
 		//go wsclient.ConnectWebSocket("192.168.182.136:8082") // o la IP donde corre tu backend
-		go wsclient.ConnectWebSocket(wsURL, ip)
+		go wsclient.ConnectWebSocket(wsURL, ip, isFallback)
 
 		fmt.Println("Servidor del agente escuchando en :8081 (modo servidor + WS).")
 		//select {}
