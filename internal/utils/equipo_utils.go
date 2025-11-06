@@ -11,7 +11,7 @@ import (
 	"github.com/yusufpapurcu/wmi"
 )
 
-// --- Estructuras WMI ---
+// --- Estructuras WMI ---set CGO_ENABLED=0
 type Win32_ComputerSystemProduct struct {
 	UUID string
 }
